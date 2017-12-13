@@ -19,28 +19,41 @@
 */
 
 
-#include<iostream>
-#include<algorithm>
-#include<fstream>
-#include<chrono>
+#include <iostream>
+#include <algorithm>
+#include <fstream>
+#include <chrono>
+#include <stdio.h>
 
-#include<ros/ros.h>
+#include "ros/ros.h"
+#include "std_msgs/String.h"
 #include <cv_bridge/cv_bridge.h>
 
-#include<opencv2/core/core.hpp>
+#include <opencv2/core/core.hpp>
 
-#include"../../../include/System.h"
+#include "../../../include/Converter.h"
+#include "../../../include/System.h"
 
 using namespace std;
+using namespace ORB_SLAM2;
+
+int file_idx = 0;
+int image_idx = 1;  // pushed to ORB_SLAM as timestamps.
 
 class ImageGrabber
 {
 public:
-    ImageGrabber(ORB_SLAM2::System* pSLAM):mpSLAM(pSLAM){}
+    ImageGrabber(ORB_SLAM2::System* pSLAM):mpSLAM(pSLAM){
+        names = vector<string>();
+    }
 
     void GrabImage(const sensor_msgs::ImageConstPtr& msg);
 
+    void RegisterImage(const std_msgs::String::ConstPtr& msg);
+
     ORB_SLAM2::System* mpSLAM;
+
+    vector<string> names;
 };
 
 int main(int argc, char **argv)
@@ -50,10 +63,10 @@ int main(int argc, char **argv)
 
     if(argc != 3)
     {
-        cerr << endl << "Usage: rosrun ORB_SLAM2 Mono path_to_vocabulary path_to_settings" << endl;        
+        cerr << endl << "Usage: rosrun ORB_SLAM2 Mono path_to_vocabulary path_to_settings" << endl;
         ros::shutdown();
         return 1;
-    }    
+    }
 
     // Create SLAM system. It initializes all system threads and gets ready to process frames.
     ORB_SLAM2::System SLAM(argv[1],argv[2],ORB_SLAM2::System::MONOCULAR,true);
@@ -62,6 +75,9 @@ int main(int argc, char **argv)
 
     ros::NodeHandle nodeHandler;
     ros::Subscriber sub = nodeHandler.subscribe("/camera/image_raw", 1, &ImageGrabber::GrabImage,&igb);
+
+    ros::NodeHandle namesHandler;
+    ros::Subscriber namesSub = namesHandler.subscribe("/frames/names", 1, &ImageGrabber::RegisterImage,&igb);
 
     ros::spin();
 
@@ -74,6 +90,40 @@ int main(int argc, char **argv)
     ros::shutdown();
 
     return 0;
+}
+
+// saves in TUM format.
+void saveKeyFrames(vector<KeyFrame*>& keyframes) {
+    sort(keyframes.begin(),keyframes.end(),KeyFrame::lId);
+
+    if (keyframes.empty()) {
+        cout << "WARNING: no keyframes to print." << endl;
+        return;
+    }
+
+    ofstream f;
+    char filename[50];
+   	sprintf(filename, "/home/parallels/poses_temp/poses_%d_count_%lu.txt", file_idx, keyframes.size());
+	  file_idx++;
+    f.open(filename);
+    f << fixed;
+
+    for(size_t i=0; i<keyframes.size(); i++)
+    {
+        KeyFrame* pKF = keyframes[i];
+
+        if(pKF->isBad())
+            continue;
+
+        cv::Mat R = pKF->GetRotation().t();
+        vector<float> q = Converter::toQuaternion(R);
+        cv::Mat t = pKF->GetCameraCenter();
+        f << setprecision(6) << pKF->mTimeStamp << setprecision(7) << " " << t.at<float>(0) << " " << t.at<float>(1) << " " << t.at<float>(2)
+          << " " << q[0] << " " << q[1] << " " << q[2] << " " << q[3] << endl;
+
+    }
+
+    f.close();
 }
 
 void ImageGrabber::GrabImage(const sensor_msgs::ImageConstPtr& msg)
@@ -90,7 +140,31 @@ void ImageGrabber::GrabImage(const sensor_msgs::ImageConstPtr& msg)
         return;
     }
 
-    mpSLAM->TrackMonocular(cv_ptr->image,cv_ptr->header.stamp.toSec());
+    auto cameraPose = mpSLAM->TrackMonocular(cv_ptr->image,(double)image_idx);
+    image_idx++;
+
+    cout << "========================= FRAME ====================";
+    cerr << "FRAME PUSHED with ts: " << names.size() << endl;
+    if (names.empty()) {
+        cout << "names were not yet pushed." << endl;
+    } else {
+        cout << "the last name pushed:  " << names[names.size()-1] << endl;
+    }
+    if (cameraPose.empty()) {
+        cout << "failed to estimate camera position" << endl;
+    } else {
+        cout << "camera pose = " << cameraPose << endl;
+        vector<KeyFrame*> keyframes = mpSLAM->GetCurrentKeyFrames();
+        saveKeyFrames(keyframes);
+    }
+    // cout << "number of map points: " << mpSLAM->GetTrackedMapPoints().size() << endl;
+    // cout << "number of keypoints detected: " << mpSLAM->GetTrackedKeyPointsUn().size() << endl;
+    // cout << "Frame calibration matrix (example): " << mpSLAM->GetTracking()->mCurrentFrame.mK << endl;
+    // vector<cv::KeyPoint> kp = mpSLAM->GetTrackedKeyPointsUn();
 }
 
-
+void ImageGrabber::RegisterImage(const std_msgs::String::ConstPtr& msg)
+{
+    // cerr << names.size() << "  " << msg->data.c_str() << endl;
+    names.emplace_back(string(msg->data.c_str()));
+}

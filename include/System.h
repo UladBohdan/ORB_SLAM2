@@ -122,6 +122,10 @@ public:
     std::vector<MapPoint*> GetTrackedMapPoints();
     std::vector<cv::KeyPoint> GetTrackedKeyPointsUn();
 
+    // Experimental methods.
+    std::vector<KeyFrame*> GetCurrentKeyFrames();
+    Tracking* GetTracking();
+
 private:
 
     // Input sensor
