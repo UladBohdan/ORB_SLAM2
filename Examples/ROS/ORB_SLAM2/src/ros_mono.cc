@@ -32,6 +32,7 @@
 #include <opencv2/core/core.hpp>
 
 #include "../../../include/Converter.h"
+#include "../../../include/MapPoint.h"
 #include "../../../include/System.h"
 
 using namespace std;
@@ -50,6 +51,8 @@ public:
     void GrabImage(const sensor_msgs::ImageConstPtr& msg);
 
     void RegisterImage(const std_msgs::String::ConstPtr& msg);
+
+    void SaveCovisibilityGraph();
 
     ORB_SLAM2::System* mpSLAM;
 
@@ -87,9 +90,55 @@ int main(int argc, char **argv)
     // Save camera trajectory
     SLAM.SaveKeyFrameTrajectoryTUM("KeyFrameTrajectory.txt");
 
+    igb.SaveCovisibilityGraph();
+
     ros::shutdown();
 
     return 0;
+}
+
+void ImageGrabber::SaveCovisibilityGraph() {
+    vector<KeyFrame*> keyframes = mpSLAM->GetCurrentKeyFrames();
+
+    if (keyframes.empty()) {
+        cout << "WARNING: no keyframes to output covisibility graph." << endl;
+        return;
+    }
+
+    sort(keyframes.begin(),keyframes.end(),KeyFrame::lId);
+
+    ofstream fout;
+    fout.open("/home/parallels/co-graph/co-graph.txt");
+    fout << fixed;
+
+    for (size_t i = 0; i < keyframes.size(); i++) {
+        KeyFrame* kf = keyframes[i];
+
+        if (kf->isBad()) continue;
+
+        fout << "KF " << (int)kf->mTimeStamp << endl << "covisible with: ";
+
+        vector<KeyFrame*> coKFs = kf->GetCovisiblesByWeight(100);
+
+        for (size_t j = 0; j < coKFs.size(); j++) {
+            fout << (int)(coKFs[j]->mTimeStamp) << ", ";
+        }
+        fout << endl;
+
+        vector<MapPoint*> mPoints(kf->GetMapPointMatches());
+        fout << "number of MapPoints and KeyPoints: " << mPoints.size() << " vs. " << kf->mvKeys.size() << endl;
+        fout << "MapPoint IDs: ";
+        for (unsigned int j = 0; j < mPoints.size(); j++) {
+            if (mPoints[j] && !mPoints[j]->isBad()) {
+                fout << mPoints[j]->mnId << "(x:" << (int)(kf->mvKeys[j].pt.x) << " y:" << (int)(kf->mvKeys[j].pt.y) << "), ";
+            }
+        }
+        fout << endl;
+
+        fout << "======================" << endl;
+    }
+
+    fout.close();
 }
 
 // saves in TUM format.
@@ -104,7 +153,7 @@ void saveKeyFrames(vector<KeyFrame*>& keyframes) {
     ofstream f;
     char filename[50];
    	sprintf(filename, "/home/parallels/poses_temp/poses_%d_count_%lu.txt", file_idx, keyframes.size());
-	  file_idx++;
+    file_idx++;
     f.open(filename);
     f << fixed;
 
@@ -154,8 +203,8 @@ void ImageGrabber::GrabImage(const sensor_msgs::ImageConstPtr& msg)
         cout << "failed to estimate camera position" << endl;
     } else {
         cout << "camera pose = " << cameraPose << endl;
-        vector<KeyFrame*> keyframes = mpSLAM->GetCurrentKeyFrames();
-        saveKeyFrames(keyframes);
+        // vector<KeyFrame*> keyframes = mpSLAM->GetCurrentKeyFrames();
+        // saveKeyFrames(keyframes);
     }
     // cout << "number of map points: " << mpSLAM->GetTrackedMapPoints().size() << endl;
     // cout << "number of keypoints detected: " << mpSLAM->GetTrackedKeyPointsUn().size() << endl;
